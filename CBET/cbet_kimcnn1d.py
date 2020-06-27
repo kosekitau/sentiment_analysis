@@ -91,7 +91,7 @@ num_filters = [100, 100, 100]
 filter_sizes = [3, 4, 5]
 num_unit = 100
 output_dim = 5
-dropout_rate = 0.3
+dropout_rate = 0.5
 
 #データローダを作成
 train_dl = torchtext.data.Iterator(train_ds, batch_size=batch_size, train=True)
@@ -189,4 +189,114 @@ x1 = net(x)
 
 print("入力のテンソルサイズ：", x.shape)
 print("出力のテンソルサイズ：", x1.shape)
+
+dataloaders_dict = {'train': train_dl, 'val': val_dl}
+criterion = nn.CrossEntropyLoss() 
+CNN_Classification(TEXT.vocab.vectors, d_model, num_filters, filter_sizes, 
+                         num_unit, output_dim, dropout_rate)
+net.train()
+
+learning_rate = 2e-4
+#optimizer = optim.SGD(net.parameters(), lr=learning_rate)
+optimizer = optim.Adam(net.parameters(), lr=learning_rate)
+#optimizer = optim.RMSprop(net.parameters(), lr=learning_rate)
+
+def train_model(net, dataloaders_dict, criterion, optimizer, num_epochs):
+  device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+  net.to(device)
+
+  torch.backends.cudnn.benchmark = True
+
+  #各epoch
+  for epoch in range(num_epochs):
+    #訓練と評価
+    for phase in ['train', 'val']:
+      if phase == 'train':
+        net.train()
+      else:
+        net.eval()
+      
+      epoch_loss = 0.0 #各epochの損失の和
+      epoch_corrects = 0 #各epochの正解数
+
+      for batch in (dataloaders_dict[phase]):
+        inputs = batch.Text[0].to(device)
+        labels = batch.Label.to(device)
+
+        optimizer.zero_grad()
+        
+        with torch.set_grad_enabled(phase=='train'):
+          #hidden = net.init_hidden(device) #LSTM隠れ状態の初期化
+          outputs = net(inputs) #[batch_size, output_dim]
+
+          loss = criterion(outputs, labels) #softmaxは中に入ってる
+          _, preds = torch.max(outputs, 1)
+
+          if phase == 'train':
+            loss.backward() #勾配を計算
+            optimizer.step() #パラメータを更新
+
+          epoch_loss += loss.item()*inputs.size(0) #バッチ数をかけてあとでデータ量で割る
+          epoch_corrects += torch.sum(preds == labels.data)
+      
+      #各epochのloss、正解数をだす
+      epoch_loss = epoch_loss/len(dataloaders_dict[phase].dataset)
+      epoch_acc = epoch_acc = epoch_corrects.double()/len(dataloaders_dict[phase].dataset)
+      print('Epoch {}/{} | {:^5} |  Loss: {:.4f} Acc: {:.4f}'.format(epoch+1,
+                                                                     num_epochs, phase, epoch_loss, epoch_acc))
+  return net
+
+num_epochs = 10
+net_trained = train_model(net, dataloaders_dict,
+                          criterion, optimizer, num_epochs=num_epochs)
+print({'次元数': d_model, 'num_filter':num_filters , 'filter_sizes': filter_sizes, 'クラス数': output_dim, 'ドロップアウト': dropout_rate, '学習率': learning_rate })
+
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+net_trained.eval()
+net_trained.to(device)
+
+y_true = np.array([])
+y_pred = np.array([])
+
+epoch_corrects = 0
+
+for batch in (test_dl):
+  inputs = batch.Text[0].to(device)
+  labels = batch.Label.to(device)
+
+  with torch.set_grad_enabled(False):
+    outputs = net_trained(inputs)
+    _, preds = torch.max(outputs, 1)
+    
+    y_true = np.concatenate([y_true, labels.to("cpu", torch.double).numpy()])
+    y_pred = np.concatenate([y_pred, preds.to("cpu", torch.double).numpy()])
+
+    epoch_corrects += torch.sum(preds == labels.data)
+
+# 正解率
+epoch_acc = epoch_corrects.double() / len(test_dl.dataset)
+
+print('テストデータ{}個での正解率：{:.4f}'.format(len(test_dl.dataset),epoch_acc))
+
+from sklearn.metrics import classification_report
+
+print(classification_report(y_true, y_pred))
+
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+
+confmat = confusion_matrix(y_true=y_true, y_pred=y_pred)
+fig, ax = plt.subplots(figsize=(2.5, 2.5))
+ax.matshow(confmat, cmap=plt.cm.Blues, alpha=0.3)
+for i in range(confmat.shape[0]):
+    for j in range(confmat.shape[1]):
+        ax.text(x=j, y=i, s=confmat[i, j], va='center', ha='center')
+
+plt.xlabel('Predicted label')
+plt.ylabel('True label')
+
+plt.tight_layout()
+#plt.savefig('confusion_matrix.png', dpi=300)
+plt.show()
 
