@@ -66,7 +66,7 @@ from torchtext.data.utils import get_tokenizer
 #テキストに処理を行うFieldを定義
 #fix_lengthはtokenの数
 TEXT = torchtext.data.Field(sequential=True, use_vocab=True, tokenize=tokenizer_with_preprocessing,
-                            lower=True, include_lengths=True, batch_first=True, fix_length=37)
+                            lower=True, include_lengths=True, batch_first=True, fix_length=40)
 
 LABEL = torchtext.data.Field(sequential=False, use_vocab=False)
 
@@ -223,9 +223,10 @@ def train_model(net, dataloaders_dict, criterion, optimizer, num_epochs):
                                                                      num_epochs, phase, epoch_loss, epoch_acc))
   return net
 
-num_epochs = 20
+num_epochs = 10
 net_trained = train_model(net, dataloaders_dict,
                           criterion, optimizer, num_epochs=num_epochs)
+print({'次元数': d_model, '隠れ状態の次元数':hidden_size, 'クラス数': output_dim, 'ドロップアウト': dropout_rate, '学習率': learning_rate })
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 

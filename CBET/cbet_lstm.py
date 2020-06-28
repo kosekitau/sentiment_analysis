@@ -14,13 +14,57 @@ from torchtext.data.utils import get_tokenizer
 toke = get_tokenizer('spacy')
 toke('I am N')
 
+import string
+import re
+
+# 以下の記号はスペースに置き換えます（カンマ、ピリオドを除く）。
+# punctuationとは日本語で句点という意味です
+print("区切り文字：", string.punctuation)
+# !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+
+# 前処理
+
+
+def preprocessing_text(text):
+    # 改行コードを消去
+    text = re.sub('<br />', '', text)
+
+    # カンマ、ピリオド以外の記号をスペースに置換
+    for p in string.punctuation:
+        if (p == ".") or (p == ","):
+            continue
+        else:
+            text = text.replace(p, " ")
+
+    # ピリオドなどの前後にはスペースを入れておく
+    text = text.replace(".", " . ")
+    text = text.replace(",", " , ")
+    return text
+
+# 分かち書き（今回はデータが英語で、簡易的にスペースで区切る）
+
+
+def tokenizer_punctuation(text):
+    return text.strip().split()
+
+
+# 前処理と分かち書きをまとめた関数を定義
+def tokenizer_with_preprocessing(text):
+    text = preprocessing_text(text)
+    ret = tokenizer_punctuation(text)
+    return ret
+
+
+# 動作を確認します
+print(tokenizer_with_preprocessing('I like cats+'))
+
 import torchtext
 from torchtext.data.utils import get_tokenizer
 
 #テキストに処理を行うFieldを定義
 #fix_lengthはtokenの数
-TEXT = torchtext.data.Field(sequential=True, use_vocab=True, tokenize=get_tokenizer('spacy'),
-                            lower=True, include_lengths=True, batch_first=True, fix_length=37)
+TEXT = torchtext.data.Field(sequential=True, use_vocab=True, tokenize=tokenizer_with_preprocessing,
+                            lower=True, include_lengths=True, batch_first=True, fix_length=40)
 
 LABEL = torchtext.data.Field(sequential=False, use_vocab=False)
 
@@ -84,9 +128,9 @@ class LSTM_Layer(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-  def __init__(self, d_model, output_dim):
+  def __init__(self, hidden_size, output_dim):
     super().__init__()
-    self.linear = nn.Linear(d_model, output_dim)
+    self.linear = nn.Linear(hidden_size, output_dim)
     nn.init.normal_(self.linear.weight, std=0.02)
     nn.init.normal_(self.linear.bias, 0)
 
@@ -137,7 +181,7 @@ criterion = nn.CrossEntropyLoss()
 net = LSTM_Classification(TEXT.vocab.vectors, d_model, hidden_size, output_dim, dropout_rate)
 net.train()
 
-learning_rate = 10e-5
+learning_rate = 2e-4
 #optimizer = optim.SGD(net.parameters(), lr=learning_rate)
 optimizer = optim.Adam(net.parameters(), lr=learning_rate)
 
@@ -189,6 +233,53 @@ def train_model(net, dataloaders_dict, criterion, optimizer, num_epochs):
 num_epochs = 10
 net_trained = train_model(net, dataloaders_dict,
                           criterion, optimizer, num_epochs=num_epochs)
+print({'次元数': d_model, '隠れ状態の次元数':hidden_size, 'クラス数': output_dim, 'ドロップアウト': dropout_rate, '学習率': learning_rate })
 
-net_trained = train_model(net_trained, dataloaders_dict,
-                          criterion, optimizer, num_epochs=num_epochs)
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+net_trained.eval()
+net_trained.to(device)
+
+y_true = np.array([])
+y_pred = np.array([])
+
+epoch_corrects = 0
+
+for batch in (test_dl):
+  inputs = batch.Text[0].to(device)
+  labels = batch.Label.to(device)
+
+  with torch.set_grad_enabled(False):
+    outputs = net_trained(inputs)
+    _, preds = torch.max(outputs, 1)
+
+    y_true = np.concatenate([y_true, labels.to("cpu", torch.double).numpy()])
+    y_pred = np.concatenate([y_pred, preds.to("cpu", torch.double).numpy()])
+
+    epoch_corrects += torch.sum(preds == labels.data)
+
+# 正解率
+epoch_acc = epoch_corrects.double() / len(test_dl.dataset)
+
+print('テストデータ{}個での正解率：{:.4f}'.format(len(test_dl.dataset),epoch_acc))
+
+from sklearn.metrics import classification_report
+
+print(classification_report(y_true, y_pred))
+
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+
+confmat = confusion_matrix(y_true=y_true, y_pred=y_pred)
+fig, ax = plt.subplots(figsize=(2.5, 2.5))
+ax.matshow(confmat, cmap=plt.cm.Blues, alpha=0.3)
+for i in range(confmat.shape[0]):
+    for j in range(confmat.shape[1]):
+        ax.text(x=j, y=i, s=confmat[i, j], va='center', ha='center')
+
+plt.xlabel('Predicted label')
+plt.ylabel('True label')
+
+plt.tight_layout()
+#plt.savefig('confusion_matrix.png', dpi=300)
+plt.show()
